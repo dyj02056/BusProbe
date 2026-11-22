@@ -60,3 +60,45 @@ public class StoreTests
     public void ConnString_PassesNpgsqlFormatThrough() =>
         Assert.Equal("Host=h;Database=d", PgStore.ConnString("Host=h;Database=d"));
 }
+
+public class SkipAndConnTests
+{
+    static CaseResult Case(string id, string status, params string[] reqs) =>
+        new(new Scenario { Id = id, Title = id, Requirements = reqs.ToList() }, "", status, 1, new(), new(), null);
+    static readonly RunInfo Run = new(new DateTime(2026, 11, 22, 0, 0, 0, DateTimeKind.Utc), null, "0.2.0");
+
+    [Fact]
+    public void Skip_IsCountedAndListed()
+    {
+        var cases = new List<CaseResult> { Case("SC-1", "PASS", "REQ-1"), Case("SC-2", "SKIP", "REQ-2") };
+        Assert.Contains("\"skipped\":1", Report.Html(Run, cases, new()));
+        Assert.Contains("REQ-2,(요구사항 파일에 없음),SC-2,SKIP", Report.Csv("r", cases, new()));
+    }
+
+    [Fact]
+    public void LoadReqs_BadYamlIsArgumentException()
+    {
+        var f = Path.GetTempFileName();
+        File.WriteAllText(f, "- { id: [unclosed");
+        try { Assert.Throws<ArgumentException>(() => Report.LoadReqs(f)); } finally { File.Delete(f); }
+    }
+
+    [Theory]
+    [InlineData("", "SSL Mode=Require")]
+    [InlineData("?sslmode=disable", "SSL Mode=Disable")]
+    [InlineData("?channel_binding=require&sslmode=verify-full", "SSL Mode=VerifyFull")]
+    public void ConnString_HonorsSslMode(string query, string expected) =>
+        Assert.Contains(expected, PgStore.ConnString("postgresql://u:p@h/db" + query));
+
+    [Fact]
+    public void ConnString_RejectsUnknownSslMode() =>
+        Assert.Throws<ArgumentException>(() => PgStore.ConnString("postgresql://u:p@h/db?sslmode=maybe"));
+
+    [Fact]
+    public void IsTransient_OnlyForNetworkLikeErrors()
+    {
+        Assert.True(PgStore.IsTransient(new TimeoutException()));
+        Assert.True(PgStore.IsTransient(new System.Net.Sockets.SocketException()));
+        Assert.False(PgStore.IsTransient(new InvalidOperationException()));
+    }
+}

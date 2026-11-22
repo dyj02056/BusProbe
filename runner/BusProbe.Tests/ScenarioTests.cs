@@ -83,3 +83,95 @@ expect:
         Assert.Contains("m_rt RT5 5 0 8 -\n", cfg);
     }
 }
+
+// 값 범위와 참조 검증 (잘못된 값이 조용히 다른 바이트로 바뀌지 않게)
+public class ScenarioRangeTests
+{
+    const string Can = @"
+id: SC-R
+bus: can
+duration_ms: 100
+nodes:
+  - name: A
+    periodic: [{ id: 0x100, dlc: 2, data: [0x01, 0x02], period_ms: 10 }]
+  - name: B
+    subscribe: ['0x100']
+expect:
+  - { kind: count, node: B, id: 0x100, min: 1 }
+";
+    const string M = @"
+id: SC-M
+bus: m1553
+duration_ms: 20
+nodes:
+  - { name: BC, schedule: [{ rt: 5, dir: bc_to_rt, sa: 3, words: [0x1111], period_ms: 10 }] }
+  - { name: RT5, rt: 5 }
+expect:
+  - { kind: status_word, node: BC, rt: 5, tr: 0, sa: 3, bits: { busy: false } }
+";
+
+    [Theory]
+    [InlineData("data: [0x01, 0x02]", "data: [0x100, 0x100]")]          // 바이트 범위 초과 (이전에는 '100100'으로 밀림)
+    [InlineData("data: [0x01, 0x02]", "data: [-1, 0x02]")]              // 음수
+    [InlineData("dlc: 2, data: [0x01, 0x02]", "dlc: 1, data: [0x01, 0x02]")] // dlc보다 많은 데이터
+    [InlineData("dlc: 2", "dlc: 9")]
+    [InlineData("id: 0x100, dlc", "id: 0x800, dlc")]                    // 표준 ID 범위 초과
+    [InlineData("period_ms: 10", "period_ms: -5")]
+    [InlineData("duration_ms: 100", "duration_ms: 3600001")]
+    [InlineData("min: 1 }", "min: 5, max: 2 }")]
+    [InlineData("min: 1 }", "min: 1, from_ms: 50, to_ms: 10 }")]
+    [InlineData("subscribe: ['0x100']", "subscribe: ['0x2000000000']")]
+    public void Can_RejectsOutOfRange(string from, string to)
+    {
+        Assert.Contains(from, Can);
+        Assert.Throws<ScenarioException>(() => ScenarioLoader.Parse(Can.Replace(from, to)));
+    }
+
+    [Theory]
+    [InlineData("words: [0x1111]", "words: [0x10000]")]                 // 워드 범위 초과
+    [InlineData("words: [0x1111]", "words: [0x1111], wc: 2")]           // words 개수 != wc
+    [InlineData("{ name: RT5, rt: 5 }", "{ name: RT5, rt: 31 }")]       // RT 주소 31은 방송
+    [InlineData("{ name: RT5, rt: 5 }", "{ name: RT5, rt: 5 }\n  - { name: RT5b, rt: 5 }")] // RT 주소 중복
+    [InlineData("sa: 3, words", "sa: 32, words")]
+    [InlineData("node: BC, rt: 5", "node: RT5, rt: 5")]                 // status_word는 BC에서만
+    [InlineData("kind: status_word, node: BC,", "kind: status_word, node: BC, dir: tx,")]
+    public void M1553_RejectsOutOfRange(string from, string to)
+    {
+        Assert.Contains(from, M);
+        Assert.Throws<ScenarioException>(() => ScenarioLoader.Parse(M.Replace(from, to).Replace("\\n", "\n")));
+    }
+
+    [Fact]
+    public void Signal_RejectsBitsBeyond64() =>
+        Assert.Throws<ScenarioException>(() => ScenarioLoader.Parse(Can.Replace("{ kind: count, node: B, id: 0x100, min: 1 }",
+            "{ kind: signal, node: B, id: 0x100, start_bit: 60, length: 8, lo: 0, hi: 1 }")));
+
+    [Fact]
+    public void CanKey_InfersExtendedAboveElevenBits()
+    {
+        Assert.Equal(0x100, ScenarioLoader.CanKey("0x100", null));
+        Assert.Equal(0x100 | 0x80000000L, ScenarioLoader.CanKey("0x100", true));
+        Assert.Equal(0x1ABCDE | 0x80000000L, ScenarioLoader.CanKey("0x1ABCDE", null));
+        Assert.Equal(0x100 | 0x80000000L, ScenarioLoader.SubKey("ext:0x100"));
+        Assert.Equal(-1, ScenarioLoader.SubKey("*"));
+    }
+
+    [Fact]
+    public void BuildConfig_SendsExtendedKeysForSubscribeAndRespond()
+    {
+        var s = ScenarioLoader.Parse(@"
+id: SC-X
+bus: can
+duration_ms: 100
+nodes:
+  - { name: A, periodic: [{ id: 0x1ABCDE, ext: true, dlc: 0, period_ms: 10 }] }
+  - { name: B, subscribe: ['0x1ABCDE'], respond: [{ on: 0x1ABCDE, id: 0x101, dlc: 0 }] }
+expect:
+  - { kind: count, node: B, id: 0x1ABCDE, min: 1 }
+");
+        var cfg = ScenarioLoader.BuildConfig(s);
+        long key = 0x1ABCDE | 0x80000000L;
+        Assert.Contains($"can_sub B {key}\n", cfg);
+        Assert.Contains($"can_rsp B {key} 257 0 0 0 -\n", cfg);
+    }
+}

@@ -13,6 +13,7 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: Host=localhost;Port=5432;Database=busprobe;Username=postgres;Password=postgres;SSL Mode=Disable
+      BUSPROBE_REQUIRE_SIMD: "1"  # 시뮬레이터가 없으면 통합 테스트가 조용히 통과하지 않고 실패
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -28,15 +29,51 @@ jobs:
         run: |
           dotnet run --project runner/BusProbe.Cli -c Release -- db migrate
           dotnet run --project runner/BusProbe.Cli -c Release -- run scenarios --simd build/busprobe-simd --out reports --no-realtime
+          dotnet run --project runner/BusProbe.Cli -c Release -- history --last 1
       - uses: actions/upload-artifact@v7
         if: always()
         with: { name: busprobe-reports, path: reports }
+
+  realtime:  # 실시간 모드 시나리오 (리눅스 타이머 기준, 기준값은 시나리오에 느슨하게 둠)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with: { dotnet-version: 10.0.x }
+      - run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUSPROBE_TESTS=OFF
+          cmake --build build
+          dotnet run --project runner/BusProbe.Cli -c Release -- run scenarios --simd build/busprobe-simd --out reports-rt --no-db
 
   tsan:  # 스레드 관련 데이터 경쟁 검사
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: 새니타이저가 높은 ASLR 엔트로피에서 깨지지 않게 조정
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
       - run: |
           cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=thread"
           cmake --build build-tsan
           ctest --test-dir build-tsan --output-on-failure
+
+  asan:  # 메모리 오류와 정의되지 않은 동작 검사 (프로토콜 파서 퍼징 테스트 포함)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: 새니타이저가 높은 ASLR 엔트로피에서 깨지지 않게 조정
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+          cmake --build build-asan --target test_core
+          ctest --test-dir build-asan --output-on-failure
+
+  docker:  # 컨테이너 이미지로 빌드부터 시나리오 실행까지 재현되는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          docker build -t busprobe .
+          mkdir -p reports && chmod 777 reports  # 컨테이너는 root가 아닌 사용자로 실행
+          docker run --rm -v "$PWD/reports:/work/reports" busprobe
+          test -s reports/report.html

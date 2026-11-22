@@ -23,19 +23,24 @@ public static class Judge
         return l.Any(r => r.Status == "ERROR") ? "ERROR" : l.Any(r => r.Status == "FAIL") ? "FAIL" : "PASS";
     }
 
-    // CAN은 식별자, 1553B는 (RT<<10)|(T/R<<9)|서브주소 (시뮬레이터 key와 동일)
-    static long Key(Scenario s, string? canId, Expect e) =>
-        s.Bus == "can" ? ScenarioLoader.Num(canId!) : ((long)e.Rt! << 10) | ((long)e.Tr! << 9) | (long)e.Sa!;
+    // CAN은 식별자(확장 ID는 0x80000000 비트 포함), 1553B는 (RT<<10)|(T/R<<9)|서브주소 (시뮬레이터 key와 동일)
+    static long Key(Scenario s, Expect e) =>
+        s.Bus == "can" ? ScenarioLoader.CanKey(e.Id!, e.Ext) : ((long)e.Rt! << 10) | ((long)e.Tr! << 9) | (long)e.Sa!;
+
+    static bool InWindow(Expect e, long ts) =>
+        ts >= (e.FromMs ?? 0) * 1_000_000 && (e.ToMs is null || ts < e.ToMs.Value * 1_000_000);
 
     static IEnumerable<Ev> Match(Scenario s, Expect e, List<Ev> t)
     {
-        long key = Key(s, e.Id, e);
-        long from = (e.FromMs ?? 0) * 1_000_000, to = e.ToMs is null ? long.MaxValue : e.ToMs.Value * 1_000_000;
-        return t.Where(x => x.Node == e.Node && x.Dir == e.Dir && x.Key == key && x.TsNs >= from && x.TsNs < to);
+        long key = Key(s, e);
+        return t.Where(x => x.Node == e.Node && x.Dir == e.Dir && x.Key == key && InWindow(e, x.TsNs));
     }
 
     static Result Done(string kind, bool ok, object expected, object actual, string failMsg) =>
         new(kind, ok ? "PASS" : "FAIL", expected, actual, ok ? "" : failMsg);
+
+    // 시험 대상이 아니라 시나리오 작성 문제로 판정할 수 없을 때
+    static Result Invalid(string kind, object expected, object actual, string msg) => new(kind, "ERROR", expected, actual, msg);
 
     // 가장 가까운 순위(nearest-rank) 백분위
     static double Percentile(List<double> v, double p)
@@ -74,22 +79,25 @@ public static class Judge
             $"평균 {mean:F3}ms, 지터 p99 {p99:F3}ms가 기준 밖");
     }
 
-    // 송신(node,id) 이후 처음 도착한 수신(to_node,to_id)까지의 지연. 응답이 없으면 실패
+    // 요청 송신(node,id)과 응답 수신(to_node,to_id)을 1:1로 짝지은 지연. 요청 시각이 from_ms~to_ms 안인 것만 본다.
+    // 각 요청은 다음 요청 시각까지 도착한, 아직 쓰지 않은 첫 응답과 짝짓는다 (응답 하나를 여러 요청에 중복 사용하지 않음)
     static Result Latency(Scenario s, Expect e, List<Ev> t)
     {
-        long sk = ScenarioLoader.Num(e.Id!), ek = ScenarioLoader.Num(e.ToId!);
-        var starts = t.Where(x => x.Node == e.Node && x.Dir == "tx" && x.Key == sk).ToList();
-        var ends = t.Where(x => x.Node == e.ToNode && x.Dir == "rx" && x.Key == ek).ToList();
+        long sk = ScenarioLoader.CanKey(e.Id!, e.Ext), ek = ScenarioLoader.CanKey(e.ToId!, e.ToExt);
+        var starts = t.Where(x => x.Node == e.Node && x.Dir == "tx" && x.Key == sk && InWindow(e, x.TsNs)).OrderBy(x => x.TsNs).ToList();
+        var ends = t.Where(x => x.Node == e.ToNode && x.Dir == "rx" && x.Key == ek).OrderBy(x => x.TsNs).ToList();
         var exp = new { p95_ms = e.P95Ms };
         if (starts.Count == 0) return Done("latency", false, exp, new { starts = 0 }, "시작 송신 이벤트 없음");
         var lat = new List<double>();
-        int missing = 0;
-        foreach (var a in starts)
+        int missing = 0, j = 0;
+        for (int i = 0; i < starts.Count; i++)
         {
-            var b = ends.FirstOrDefault(x => x.TsNs >= a.TsNs);
-            if (b is null) missing++; else lat.Add((b.TsNs - a.TsNs) / NsPerMs);
+            long a = starts[i].TsNs, next = i + 1 < starts.Count ? starts[i + 1].TsNs : long.MaxValue;
+            while (j < ends.Count && ends[j].TsNs < a) j++;  // 이 요청 이전의 응답은 버린다
+            if (j < ends.Count && ends[j].TsNs <= next) { lat.Add((ends[j].TsNs - a) / NsPerMs); j++; }
+            else missing++;
         }
-        if (missing > 0) return Done("latency", false, exp, new { missing }, $"응답이 없는 요청 {missing}건");
+        if (missing > 0) return Done("latency", false, exp, new { matched = lat.Count, missing }, $"응답이 없는 요청 {missing}건 (요청 {starts.Count}건)");
         double p95 = Percentile(lat, 0.95);
         return Done("latency", p95 <= e.P95Ms, exp, new { p95_ms = Math.Round(p95, 3), max_ms = lat.Max(), n = lat.Count }, $"지연 p95 {p95:F3}ms가 한계 초과");
     }
@@ -109,7 +117,7 @@ public static class Judge
             for (int i = 0; i < e.Length!.Value; i++)
             {
                 int bit = e.StartBit!.Value + i, by = bit / 8;
-                if (by >= dlc) return Done("signal", false, exp, new { dlc }, $"신호가 DLC({dlc}) 밖의 비트를 사용");
+                if (by >= dlc) return Invalid("signal", exp, new { dlc }, $"신호가 DLC({dlc}) 밖의 비트를 사용 (시나리오의 start_bit/length 확인)");
                 v |= (ulong)((ev.Raw[8 + by] >> (bit % 8)) & 1) << i;
             }
             double phys = v * factor + offset;

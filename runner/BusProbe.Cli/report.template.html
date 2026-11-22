@@ -35,6 +35,7 @@ h1 { margin: 0 0 24px; max-width: 24em; font-size: clamp(1.7rem, 4.4vw, 2.5rem);
 .seg { flex: 1 1 0; min-width: 10px; height: 18px; padding: 0; border: 0; border-radius: 2px; background: var(--pass); }
 .seg[data-s="FAIL"] { background: var(--fail); }
 .seg[data-s="ERROR"] { background: var(--err); }
+.seg[data-s="SKIP"] { background: var(--line); }
 .seg:hover { filter: brightness(1.15); }
 @keyframes sweep { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @media (prefers-reduced-motion: reduce) { .strip { animation: none; } }
@@ -54,7 +55,7 @@ h1 { margin: 0 0 24px; max-width: 24em; font-size: clamp(1.7rem, 4.4vw, 2.5rem);
 .row { display: grid; grid-template-columns: 5.5em 9.5em 1fr auto; gap: 4px 16px; align-items: baseline; width: 100%; padding: 12px 8px; border: 0; background: none; text-align: left; }
 .row:hover { background: var(--surface); }
 .badge { font-weight: 600; }
-.badge[data-s="PASS"] { color: var(--pass); } .badge[data-s="FAIL"] { color: var(--fail); } .badge[data-s="ERROR"] { color: var(--err); }
+.badge[data-s="PASS"] { color: var(--pass); } .badge[data-s="FAIL"] { color: var(--fail); } .badge[data-s="ERROR"] { color: var(--err); } .badge[data-s="SKIP"] { color: var(--muted); }
 .cid { font-weight: 600; }
 .sub { display: flex; gap: 14px; color: var(--muted); font-size: 14px; white-space: nowrap; }
 @media (max-width: 700px) {
@@ -109,6 +110,7 @@ tr[data-s="ERROR"] td:first-child { box-shadow: inset 4px 0 var(--err); }
       <button class="chip" data-f="all" aria-pressed="true"></button>
       <button class="chip" data-f="bad" aria-pressed="false"></button>
       <button class="chip" data-f="PASS" aria-pressed="false"></button>
+      <button class="chip" data-f="SKIP" aria-pressed="false" hidden></button>
       <input class="search" id="q" type="search" placeholder="ID, 제목, 요구사항으로 찾기" aria-label="시나리오 검색">
     </div>
     <ul class="cases" id="cases"></ul>
@@ -123,8 +125,10 @@ tr[data-s="ERROR"] td:first-child { box-shadow: inset 4px 0 var(--err); }
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const D = JSON.parse(document.getElementById('data').textContent);
-const LABEL = { PASS: '통과', FAIL: '실패', ERROR: '오류' };
-const GLYPH = { PASS: '✓', FAIL: '✕', ERROR: '!' };
+const LABEL = { PASS: '통과', FAIL: '실패', ERROR: '오류', SKIP: '건너뜀' };
+const GLYPH = { PASS: '✓', FAIL: '✕', ERROR: '!', SKIP: '–' };
+const isBad = s => s === 'FAIL' || s === 'ERROR';
+const tone = s => s === 'PASS' ? 't-pass' : s === 'FAIL' ? 't-fail' : s === 'SKIP' ? 't-none' : 't-err';
 const $ = s => document.querySelector(s);
 
 // 안전한 DOM 생성: 시나리오 제목 등 사용자 입력은 항상 텍스트 노드로 들어간다
@@ -148,7 +152,8 @@ function sv(tag, props, text) {
 
 const ms = ns => (ns / 1e6).toFixed(3);
 const fmtObj = o => o == null ? '' : Object.entries(o).map(([k, v]) => k + ' ' + (v !== null && typeof v === 'object' ? JSON.stringify(v) : v)).join(', ');
-const keyText = (bus, k) => bus === 'can' ? '0x' + k.toString(16).toUpperCase()
+// CAN 키의 0x80000000 비트는 확장(29비트) ID 표시
+const keyText = (bus, k) => bus === 'can' ? (k >= 0x80000000 ? '0x' + (k - 0x80000000).toString(16).toUpperCase() + ' (확장)' : '0x' + k.toString(16).toUpperCase())
   : `RT${k >> 10} ${(k >> 9) & 1 ? 'RT→BC' : 'BC→RT'} 서브주소 ${k & 31}`;
 const DIR = { tx: '송신', rx: '수신', to: '응답 없음' };
 
@@ -158,8 +163,9 @@ function header() {
   $('#meta').append(...[h('span', {}, new Date(r.startedAt).toLocaleString('ko-KR')),
     r.gitSha ? h('span', {}, '커밋 ' + r.gitSha) : null, h('span', {}, 'BusProbe ' + r.toolVersion)].filter(Boolean));
   $('#verdict').textContent = r.total === 0 ? '실행한 시나리오가 없습니다'
-    : bad === 0 ? `${r.total}개 시나리오가 모두 통과했습니다`
-    : `${r.total}개 중 ${r.passed}개 통과, ${r.failed ? r.failed + '개 실패' : ''}${r.failed && r.errored ? ', ' : ''}${r.errored ? r.errored + '개 오류' : ''}`;
+    : bad === 0 ? (r.skipped ? `실행한 ${r.total - r.skipped}개 시나리오가 모두 통과했습니다` : `${r.total}개 시나리오가 모두 통과했습니다`)
+    : `${r.total}개 중 ${r.passed}개 통과, ${[r.failed ? r.failed + '개 실패' : '', r.errored ? r.errored + '개 오류' : ''].filter(Boolean).join(', ')}`;
+  if (r.skipped) $('#verdict').textContent += ` (${r.skipped}개 건너뜀)`;
   D.cases.forEach(c => $('#strip').append(h('button', {
     class: 'seg', 'data-s': c.status, title: `${c.id} ${LABEL[c.status]}`, 'aria-label': `${c.id} ${LABEL[c.status]}`,
     onclick: () => openCase(c.id),
@@ -221,7 +227,7 @@ function panel(c) {
     h('thead', {}, h('tr', {}, ['종류', '기대', '실제', '결과'].map(t => h('th', {}, t)))),
     h('tbody', {}, c.results.map(r => h('tr', { 'data-s': r.status },
       h('td', {}, r.kind), h('td', {}, fmtObj(r.expected)), h('td', {}, fmtObj(r.actual)),
-      h('td', {}, h('span', { class: r.status === 'PASS' ? 't-pass' : r.status === 'FAIL' ? 't-fail' : 't-err' }, `${GLYPH[r.status]} ${LABEL[r.status]}`), r.message ? ' ' + r.message : '')))))));
+      h('td', {}, h('span', { class: tone(r.status) }, `${GLYPH[r.status]} ${LABEL[r.status]}`), r.message ? ' ' + r.message : '')))))));
   if (c.trace.length) p.append(h('h3', {}, '송수신 타임라인'),
     h('p', { class: 'note' }, '노드마다 한 줄입니다. 위로 솟은 선은 송신, 아래로 내려간 선은 수신, ✕는 응답이 없던 시점입니다. 선에 마우스를 올리면 시각이 보입니다.'),
     timeline(c), h('h3', {}, '트래픽 기록'), ...traceTable(c));
@@ -254,7 +260,7 @@ function openCase(id) {
 function applyFilter() {
   document.querySelectorAll('#cases > li').forEach(li => {
     const c = li._c, q = query.toLowerCase();
-    const okF = filter === 'all' || (filter === 'bad' ? c.status !== 'PASS' : c.status === filter);
+    const okF = filter === 'all' || (filter === 'bad' ? isBad(c.status) : c.status === filter);
     const okQ = !q || [c.id, c.title, ...c.requirements].join(' ').toLowerCase().includes(q);
     li.hidden = !(okF && okQ);
   });
@@ -271,7 +277,7 @@ function reqs() {
       h('td', {}, r.id), h('td', {}, r.title),
       h('td', {}, r.caseIds.length === 0 ? h('span', { class: 't-none' }, '시험 없음') :
         r.caseIds.map(id => h('button', { class: 'tag', style: 'margin-right:6px', onclick: () => { select('cases'); openCase(id); } },
-          h('span', { class: byId[id].status === 'PASS' ? 't-pass' : byId[id].status === 'FAIL' ? 't-fail' : 't-err' }, GLYPH[byId[id].status]), ' ' + id)))))));
+          h('span', { class: tone(byId[id].status) }, GLYPH[byId[id].status]), ' ' + id)))))));
 }
 
 function select(name) {
@@ -289,12 +295,13 @@ const bad = D.run.failed + D.run.errored;
 document.querySelector('[data-f=all]').textContent = `전체 ${D.run.total}`;
 document.querySelector('[data-f=bad]').textContent = `실패·오류 ${bad}`;
 document.querySelector('[data-f=PASS]').textContent = `통과 ${D.run.passed}`;
+if (D.run.skipped) { const sk = document.querySelector('[data-f=SKIP]'); sk.textContent = `건너뜀 ${D.run.skipped}`; sk.hidden = false; }
 document.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { filter = b.dataset.f; applyFilter(); }));
 $('#q').addEventListener('input', e => { query = e.target.value; applyFilter(); });
 $('#tab-cases').addEventListener('click', () => select('cases'));
 $('#tab-reqs').addEventListener('click', () => select('reqs'));
 reqs();
-if (bad > 0) { const first = D.cases.find(c => c.status !== 'PASS'); if (first) toggle(document.getElementById('case-' + first.id), true); } // 실패가 있으면 첫 실패를 미리 펼친다
+if (bad > 0) { const first = D.cases.find(c => isBad(c.status)); if (first) toggle(document.getElementById('case-' + first.id), true); } // 실패가 있으면 첫 실패를 미리 펼친다
 </script>
 </body>
 </html>

@@ -165,3 +165,63 @@ TEST(Sim, RealtimeSmoke) {
   EXPECT_LT(t[2].ts, 200'000'000ull);  // CI 지연 여유
   EXPECT_TRUE(std::is_sorted(t.begin(), t.end(), [](auto& a, auto& b) { return a.ts < b.ts; }));
 }
+
+TEST(Sim, ZeroDelayResponseLoopHitsEventLimit) {  // 지연 0으로 서로 응답하면 멈추지 않고 오류
+  Scenario s; s.duration_ms = 100;
+  s.can_tx.push_back({"A", frame(0x100), 10, 0});
+  s.can_rsp.push_back({"B", 0x100, frame(0x101), 0});
+  s.can_rsp.push_back({"A", 0x101, frame(0x100), 0});
+  EXPECT_THROW(simulate(s), std::runtime_error);
+}
+
+TEST(Sim, TraceSizeLimit) {
+  Scenario s; s.duration_ms = 1000; s.max_events = 50;
+  s.can_tx.push_back({"A", frame(1), 1, 0});
+  EXPECT_THROW(simulate(s), std::runtime_error);
+}
+
+TEST(Sim, RejectsTooLongDuration) {
+  Scenario s; s.duration_ms = MAX_DURATION_MS + 1;
+  EXPECT_THROW(simulate(s), std::invalid_argument);
+}
+
+TEST(Sim, ExtendedIdKeyDiffersFromStandard) {  // 표준 0x100과 확장 0x100은 다른 메시지
+  Scenario s; s.duration_ms = 10;
+  CanFrame e = frame(0x100); e.ext = true;
+  s.can_tx.push_back({"A", frame(0x100), 10, 0});
+  s.can_tx.push_back({"C", e, 10, 0});
+  s.can_sub.push_back({"B", 0x100});
+  auto t = simulate(s);
+  auto rx = pick(t, "rx", "B");
+  ASSERT_EQ(rx.size(), 1u);
+  EXPECT_EQ(rx[0].key, 0x100u);
+  bool saw_ext = false;
+  for (auto& ev : t) saw_ext |= ev.dir == "tx" && ev.node == "C" && ev.key == (0x100u | CAN_EFF);
+  EXPECT_TRUE(saw_ext);
+}
+
+TEST(Sim, RejectsDuplicateRtAddress) {
+  Scenario s; s.duration_ms = 10;
+  s.rts.push_back({"RT5", 5, false, 0, {}});
+  s.rts.push_back({"RT5b", 5, false, 0, {}});
+  EXPECT_THROW(simulate(s), std::invalid_argument);
+}
+
+TEST(Sim, BroadcastSetsBitInNextStatusOnly) {
+  Scenario s; s.duration_ms = 30;
+  s.rts.push_back({"RT1", 1, false, 0, {}});
+  s.bcs.push_back({"BC", 31, 0, 1, 1, 100, 0, {7}});     // 0ms 방송
+  s.bcs.push_back({"BC", 1, 0, 2, 1, 10, 5, {1}});       // 5, 15, 25ms RT1 전송
+  auto rx = pick(simulate(s), "rx", "BC");
+  ASSERT_EQ(rx.size(), 3u);
+  EXPECT_TRUE(word_at(rx[0], 0) & ST_BROADCAST);
+  EXPECT_FALSE(word_at(rx[1], 0) & ST_BROADCAST);
+}
+
+TEST(M1553, CorruptedWordsRejected) {
+  uint32_t w = encode_word(0x1234, SYNC_DATA);
+  EXPECT_FALSE(decode_word(w ^ 1).has_value());              // 패리티 오류
+  EXPECT_FALSE(decode_word(w ^ (1u << 5)).has_value());      // 데이터 비트 1개 반전
+  EXPECT_FALSE(decode_word((w & 0x1FFFF) | (7u << 17)).has_value());  // 잘못된 동기
+  EXPECT_FALSE(decode_word(w | (1u << 20)).has_value());     // 20비트 초과
+}

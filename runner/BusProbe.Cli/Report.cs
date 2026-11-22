@@ -17,10 +17,20 @@ public static class Report
 {
     const int HtmlTraceCap = 3000; // HTML 용량 보호. 전체는 traces/*.ndjson 에 저장
 
-    public static List<Req> LoadReqs(string path) =>
-        !File.Exists(path) ? new() :
-        new DeserializerBuilder().WithNamingConvention(UnderscoredNamingConvention.Instance).Build()
-            .Deserialize<List<ReqRow>>(File.ReadAllText(path))?.Select(r => new Req(r.Id, r.Title)).ToList() ?? new();
+    // 파일이 없으면 빈 목록. 형식 오류는 ArgumentException (CLI가 종료 코드 2로 알린다)
+    public static List<Req> LoadReqs(string path)
+    {
+        if (!File.Exists(path)) return new();
+        try
+        {
+            return new DeserializerBuilder().WithNamingConvention(UnderscoredNamingConvention.Instance).Build()
+                .Deserialize<List<ReqRow>>(File.ReadAllText(path))?.Select(r => new Req(r.Id, r.Title)).ToList() ?? new();
+        }
+        catch (YamlDotNet.Core.YamlException e)
+        {
+            throw new ArgumentException($"요구사항 파일 오류 ({path}): {e.Message}");
+        }
+    }
 
     // 요구사항 파일 + 시나리오가 참조했지만 파일에 없는 ID
     static List<Req> Merge(List<Req> reqs, List<CaseResult> cases) =>
@@ -37,6 +47,7 @@ public static class Report
             {
                 startedAt = run.StartedAt, gitSha = run.GitSha, toolVersion = run.ToolVersion, total = cases.Count,
                 passed = cases.Count(c => c.Status == "PASS"), failed = cases.Count(c => c.Status == "FAIL"), errored = cases.Count(c => c.Status == "ERROR"),
+                skipped = cases.Count(c => c.Status == "SKIP"),
             },
             cases = cases.Select(c => new
             {
@@ -57,7 +68,7 @@ public static class Report
         return tpl.Replace("__DATA__", json.Replace("<", "\\u003c"));
     }
 
-    // 요구사항마다 연결된 시나리오 한 줄씩. 시험이 없는 요구사항은 "미시험"으로 남긴다
+    // 요구사항마다 연결된 시나리오 한 줄씩. 시험이 없는 요구사항은 "미시험", 건너뛴 시나리오는 결과 SKIP으로 남긴다
     public static string Csv(string runLabel, List<CaseResult> cases, List<Req> reqs)
     {
         static string Q(string v) => v.IndexOfAny(new[] { ',', '"', '\n' }) >= 0 ? "\"" + v.Replace("\"", "\"\"") + "\"" : v;

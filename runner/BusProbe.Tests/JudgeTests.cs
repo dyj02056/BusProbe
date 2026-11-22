@@ -60,8 +60,8 @@ public class JudgeTests
         Assert.Equal("PASS", Status(Sc(e), new() { Rx(0, raw: raw) }));
         e.Hi = 39.5;
         Assert.Equal("FAIL", Status(Sc(e), new() { Rx(0, raw: raw) }));
-        e.StartBit = 16;  // DLC 밖
-        Assert.Equal("FAIL", Status(Sc(e), new() { Rx(0, raw: raw) }));
+        e.StartBit = 16;  // DLC 밖: 시험 대상이 아니라 시나리오 문제이므로 ERROR
+        Assert.Equal("ERROR", Status(Sc(e), new() { Rx(0, raw: raw) }));
     }
 
     [Fact]
@@ -95,4 +95,48 @@ public class JudgeTests
     }
 
     // 판정기 자체가 항상 PASS를 내지 않는지 확인하는 메타 시험은 위 FAIL 케이스들이 담당
+}
+
+public class JudgeLatencyAndKeyTests
+{
+    static Scenario Sc(params Expect[] e) => new() { Id = "T", Bus = "can", DurationMs = 100, Nodes = { new() { Name = "A" }, new() { Name = "B" } }, Expect = e.ToList() };
+    static Ev Ev(long ms, string dir, string node, long key) => new(ms * 1_000_000, dir, node, "can", key, new byte[16]);
+    static Result Eval(Scenario s, List<Ev> t) => Judge.Evaluate(s, t)[0];
+    static Expect Lat() => new() { Kind = "latency", Node = "A", Id = "0x200", ToNode = "A", ToId = "0x201", P95Ms = 100 };
+
+    [Fact]
+    public void Latency_DoesNotReuseOneResponseForManyRequests()
+    {
+        // 요청 3건, 응답 1건: 예전 방식은 세 요청 모두 25ms 응답과 짝지어 누락 0건이었다
+        var t = new List<Ev> { Ev(0, "tx", "A", 0x200), Ev(10, "tx", "A", 0x200), Ev(20, "tx", "A", 0x200), Ev(25, "rx", "A", 0x201) };
+        var r = Eval(Sc(Lat()), t);
+        Assert.Equal("FAIL", r.Status);
+        Assert.Contains("2건", r.Message);
+    }
+
+    [Fact]
+    public void Latency_ResponseAtNextRequestTimeStillCounts()
+    {
+        var t = new List<Ev> { Ev(0, "tx", "A", 0x200), Ev(50, "tx", "A", 0x200), Ev(50, "rx", "A", 0x201), Ev(100, "rx", "A", 0x201) };
+        Assert.Equal("PASS", Eval(Sc(Lat()), t).Status);
+    }
+
+    [Fact]
+    public void Latency_AppliesWindowToRequests()
+    {
+        var e = Lat(); e.FromMs = 40;
+        var t = new List<Ev> { Ev(0, "tx", "A", 0x200), Ev(50, "tx", "A", 0x200), Ev(52, "rx", "A", 0x201) };
+        Assert.Equal("PASS", Eval(Sc(e), t).Status);   // 0ms 요청은 구간 밖이라 누락으로 세지 않음
+    }
+
+    [Fact]
+    public void Count_SeparatesStandardAndExtendedId()
+    {
+        long ext = 0x100 | 0x80000000L;
+        var t = new List<Ev> { Ev(0, "rx", "B", 0x100), Ev(1, "rx", "B", ext), Ev(2, "rx", "B", ext) };
+        var std = new Expect { Kind = "count", Node = "B", Id = "0x100", Min = 1, Max = 1 };
+        var ex = new Expect { Kind = "count", Node = "B", Id = "0x100", Ext = true, Min = 2, Max = 2 };
+        Assert.Equal("PASS", Eval(Sc(std), t).Status);
+        Assert.Equal("PASS", Eval(Sc(ex), t).Status);
+    }
 }

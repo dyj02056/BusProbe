@@ -28,13 +28,19 @@ try
         default: Console.Error.WriteLine("알 수 없는 명령: " + args[0]); return 2;
     }
 }
-catch (Exception e) when (e is SimException or IOException or ArgumentException or FormatException)
+catch (Exception e) when (e is SimException or IOException or ArgumentException or FormatException or OverflowException
+                           or UnauthorizedAccessException or TimeoutException or System.Net.Sockets.SocketException)
 {
-    Console.Error.WriteLine("오류: " + e.Message); // 연결 문자열 등 비밀은 메시지에 싣지 않는다
+    Console.Error.WriteLine("오류: " + e.Message);
+    return 2;
+}
+catch (Npgsql.NpgsqlException e) // DB 오류: 종류와 메시지만 낸다 (연결 문자열 등 비밀은 싣지 않는다)
+{
+    Console.Error.WriteLine($"DB 오류 ({e.GetType().Name}): {e.Message}");
     return 2;
 }
 
-// 시나리오 폴더 전체 실행 → 판정 → 파일 생성 → (선택) Neon 저장. 종료 코드: 0 통과, 1 실패, 2 오류
+// 시나리오 폴더 전체 실행 → 판정 → 파일 생성 → (선택) Neon 저장. 종료 코드: 0 통과, 1 실패, 2 오류 (SKIP은 영향 없음)
 int RunCmd()
 {
     if (args.Length < 2) throw new ArgumentException("시나리오 폴더를 지정하세요");
@@ -42,6 +48,7 @@ int RunCmd()
     var outDir = Opt("--out") ?? "reports";
     var reqsPath = Opt("--reqs") ?? "docs/requirements.yaml";
     var files = Directory.GetFiles(args[1], "*.yaml").OrderBy(f => f, StringComparer.Ordinal).ToList();
+    var reqs = Report.LoadReqs(reqsPath); // 요구사항 파일 오류는 시험 전에 알린다
 
     var run = new RunInfo(DateTime.UtcNow, GitSha(), Assembly.GetEntryAssembly()!.GetName().Version!.ToString(3));
     var cases = new List<CaseResult>();
@@ -49,19 +56,17 @@ int RunCmd()
         foreach (var f in files)
         {
             var r = Runner.RunOne(host, f, Flag("--no-realtime"));
-            if (r is null) { Console.WriteLine($"건너뜀 {Path.GetFileName(f)} (실시간)"); continue; }
             cases.Add(r);
             Console.WriteLine($"{r.Status,-5} {r.Scenario.Id,-14} {r.Scenario.Title}" + (r.Status == "PASS" ? "" : "\n        " + (r.Error ?? string.Join(" / ", r.Results.Where(x => x.Status != "PASS").Select(x => $"{x.Kind}: {x.Message}")))));
         }
 
-    var reqs = Report.LoadReqs(reqsPath);
     Directory.CreateDirectory(Path.Combine(outDir, "traces"));
     File.WriteAllText(Path.Combine(outDir, "report.html"), Report.Html(run, cases, reqs), new UTF8Encoding(false));
     File.WriteAllText(Path.Combine(outDir, "traceability.csv"), Report.Csv(run.StartedAt.ToString("yyyyMMdd-HHmmss"), cases, reqs), new UTF8Encoding(true)); // BOM: 엑셀 한글
     foreach (var c in cases) File.WriteAllText(Path.Combine(outDir, "traces", c.Scenario.Id + ".ndjson"), Report.Ndjson(c.Trace));
 
-    int pass = cases.Count(c => c.Status == "PASS"), fail = cases.Count(c => c.Status == "FAIL"), err = cases.Count(c => c.Status == "ERROR");
-    Console.WriteLine($"\n전체 {cases.Count} · 통과 {pass} · 실패 {fail} · 오류 {err}\n결과서: {Path.GetFullPath(Path.Combine(outDir, "report.html"))}");
+    int pass = cases.Count(c => c.Status == "PASS"), fail = cases.Count(c => c.Status == "FAIL"), err = cases.Count(c => c.Status == "ERROR"), skip = cases.Count(c => c.Status == "SKIP");
+    Console.WriteLine($"\n전체 {cases.Count} · 통과 {pass} · 실패 {fail} · 오류 {err} · 건너뜀 {skip}\n결과서:{Path.GetFullPath(Path.Combine(outDir, "report.html"))}");
 
     if (dbUrl is not null && !Flag("--no-db"))
     {

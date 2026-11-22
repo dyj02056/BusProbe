@@ -8,7 +8,7 @@ option(BUSPROBE_TESTS "단위 테스트 빌드 (GoogleTest를 내려받음)" ON)
 find_package(Threads REQUIRED)
 
 # 코덱과 시뮬레이터 코어 (정적 라이브러리)
-add_library(bpcore STATIC core/can.cpp core/m1553.cpp core/sim.cpp)
+add_library(bpcore STATIC core/can.cpp core/m1553.cpp core/sim.cpp core/protocol.cpp)
 target_include_directories(bpcore PUBLIC core)
 target_link_libraries(bpcore PUBLIC Threads::Threads)
 
@@ -34,7 +34,7 @@ if(BUSPROBE_TESTS)
   FetchContent_MakeAvailable(googletest)
 
   enable_testing()
-  add_executable(test_core core/tests/test_can.cpp core/tests/test_m1553.cpp core/tests/test_sim.cpp)
+  add_executable(test_core core/tests/test_can.cpp core/tests/test_m1553.cpp core/tests/test_sim.cpp core/tests/test_protocol.cpp)
   target_link_libraries(test_core bpcore GTest::gtest_main)
   add_test(NAME core COMMAND test_core)
 endif()

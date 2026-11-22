@@ -20,6 +20,9 @@ COPY --from=cpp /src/build/busprobe-simd /app/busprobe-simd
 COPY scenarios scenarios
 COPY docs/requirements.yaml docs/requirements.yaml
 COPY db db
+# root가 아닌 기본 사용자(app)로 실행. 결과 폴더만 쓰기 가능하게 둔다
+RUN mkdir -p /work/reports && chown "$APP_UID" /work/reports
+USER $APP_UID
 ENV BUSPROBE_SIMD=/app/busprobe-simd
 ENTRYPOINT ["dotnet", "/app/BusProbe.Cli.dll"]
 CMD ["run", "scenarios", "--out", "reports", "--no-realtime"]
