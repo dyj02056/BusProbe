@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BusProbe 시험 결과서</title>
+<style>
+/* 색은 토큰으로만 쓴다. 다크 모드는 같은 이름을 다시 정의 */
+:root {
+  --bg: #EDF1F3; --surface: #FFFFFF; --ink: #14283C; --muted: #566676; --line: #CBD5DC;
+  --pass: #1F7A5A; --fail: #C4402F; --err: #8F5F0A; --accent: #2B5C8A;
+  --pass-bg: #DDEFE7; --fail-bg: #F6DEDA; --err-bg: #F3E7CC;
+  --font: "Bahnschrift", "Segoe UI Variable Text", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F1A24; --surface: #16232F; --ink: #E4ECF1; --muted: #9AABB8; --line: #2A3B4A;
+    --pass: #4CC59B; --fail: #F0806F; --err: #E0B04F; --accent: #7DB2E6;
+    --pass-bg: #163528; --fail-bg: #3B1E1B; --err-bg: #3A2D12;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { margin: 0; color: var(--ink); background: var(--bg); font: 15px/1.55 var(--font); font-variant-numeric: tabular-nums; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px 64px; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+
+/* 머리말: 실행 정보, 한 문장 요약, 케이스별 상태 막대 */
+header { padding: 40px 0 24px; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+h1 { margin: 0 0 24px; max-width: 24em; font-size: clamp(1.7rem, 4.4vw, 2.5rem); line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+.strip { display: flex; gap: 3px; animation: sweep 700ms ease-out both; }
+.seg { flex: 1 1 0; min-width: 10px; height: 18px; padding: 0; border: 0; border-radius: 2px; background: var(--pass); }
+.seg[data-s="FAIL"] { background: var(--fail); }
+.seg[data-s="ERROR"] { background: var(--err); }
+.seg:hover { filter: brightness(1.15); }
+@keyframes sweep { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@media (prefers-reduced-motion: reduce) { .strip { animation: none; } }
+
+/* 탭과 도구줄 */
+.tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); }
+.tab { padding: 10px 0; border: 0; background: none; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 16px 0; }
+.chip { padding: 5px 12px; border: 1px solid var(--line); border-radius: 99px; background: transparent; }
+.chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.search { flex: 1 1 200px; max-width: 320px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+
+/* 케이스 목록: 카드 대신 구분선이 있는 행 */
+.cases { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.cases > li { border-bottom: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 5.5em 9.5em 1fr auto; gap: 4px 16px; align-items: baseline; width: 100%; padding: 12px 8px; border: 0; background: none; text-align: left; }
+.row:hover { background: var(--surface); }
+.badge { font-weight: 600; }
+.badge[data-s="PASS"] { color: var(--pass); } .badge[data-s="FAIL"] { color: var(--fail); } .badge[data-s="ERROR"] { color: var(--err); }
+.cid { font-weight: 600; }
+.sub { display: flex; gap: 14px; color: var(--muted); font-size: 14px; white-space: nowrap; }
+@media (max-width: 700px) {
+  .row { grid-template-columns: 5em 1fr; }
+  .row .cid { grid-column: 2; } .row .ttl { grid-column: 1 / -1; } .row .sub { grid-column: 1 / -1; }
+}
+.panel { padding: 8px 8px 28px 8px; }
+.panel h3 { margin: 24px 0 8px; font-size: 15px; }
+.note { max-width: 62ch; color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
+.callout { max-width: 62ch; padding: 10px 14px; border-left: 4px solid var(--err); background: var(--err-bg); }
+.reqs-line { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.tag { padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; }
+
+/* 표 */
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 14px; }
+th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+td.hex { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+td.num { text-align: right; white-space: nowrap; }
+tr[data-s="FAIL"] td:first-child { box-shadow: inset 4px 0 var(--fail); }
+tr[data-s="ERROR"] td:first-child { box-shadow: inset 4px 0 var(--err); }
+.t-fail { color: var(--fail); } .t-pass { color: var(--pass); } .t-err { color: var(--err); } .t-none { color: var(--muted); }
+
+/* 타임라인: 노드마다 한 줄, 위로 송신 아래로 수신 */
+.tl-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.tl { display: block; min-width: 640px; width: 100%; height: auto; }
+.tl .base { stroke: var(--line); stroke-width: 1; }
+.tl .tx { stroke: var(--accent); stroke-width: 1.6; }
+.tl .rx { stroke: var(--pass); stroke-width: 1.6; }
+.tl .to { stroke: var(--fail); stroke-width: 2; }
+.tl text { fill: var(--muted); font: 12px var(--font); }
+.sel { margin: 0 8px 0 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+.empty { padding: 40px 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="meta" id="meta"></p>
+    <h1 id="verdict"></h1>
+    <div class="strip" id="strip" role="navigation" aria-label="시나리오별 결과"></div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-cases" aria-selected="true" aria-controls="view-cases">시험 결과</button>
+    <button class="tab" role="tab" id="tab-reqs" aria-selected="false" aria-controls="view-reqs">요구사항 추적</button>
+  </div>
+
+  <section id="view-cases" role="tabpanel" aria-labelledby="tab-cases">
+    <div class="tools">
+      <button class="chip" data-f="all" aria-pressed="true"></button>
+      <button class="chip" data-f="bad" aria-pressed="false"></button>
+      <button class="chip" data-f="PASS" aria-pressed="false"></button>
+      <input class="search" id="q" type="search" placeholder="ID, 제목, 요구사항으로 찾기" aria-label="시나리오 검색">
+    </div>
+    <ul class="cases" id="cases"></ul>
+  </section>
+
+  <section id="view-reqs" role="tabpanel" aria-labelledby="tab-reqs" hidden>
+    <p class="note" id="reqs-sum" style="padding-top:16px"></p>
+    <div class="tbl-wrap"><table id="reqs-tbl"></table></div>
+  </section>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const LABEL = { PASS: '통과', FAIL: '실패', ERROR: '오류' };
+const GLYPH = { PASS: '✓', FAIL: '✕', ERROR: '!' };
+const $ = s => document.querySelector(s);
+
+// 안전한 DOM 생성: 시나리오 제목 등 사용자 입력은 항상 텍스트 노드로 들어간다
+function h(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+}
+const NS = 'http://www.w3.org/2000/svg';
+function sv(tag, props, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(props || {})) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+const ms = ns => (ns / 1e6).toFixed(3);
+const fmtObj = o => o == null ? '' : Object.entries(o).map(([k, v]) => k + ' ' + (v !== null && typeof v === 'object' ? JSON.stringify(v) : v)).join(', ');
+const keyText = (bus, k) => bus === 'can' ? '0x' + k.toString(16).toUpperCase()
+  : `RT${k >> 10} ${(k >> 9) & 1 ? 'RT→BC' : 'BC→RT'} 서브주소 ${k & 31}`;
+const DIR = { tx: '송신', rx: '수신', to: '응답 없음' };
+
+/* 머리말 */
+function header() {
+  const r = D.run, bad = r.failed + r.errored;
+  $('#meta').append(...[h('span', {}, new Date(r.startedAt).toLocaleString('ko-KR')),
+    r.gitSha ? h('span', {}, '커밋 ' + r.gitSha) : null, h('span', {}, 'BusProbe ' + r.toolVersion)].filter(Boolean));
+  $('#verdict').textContent = r.total === 0 ? '실행한 시나리오가 없습니다'
+    : bad === 0 ? `${r.total}개 시나리오가 모두 통과했습니다`
+    : `${r.total}개 중 ${r.passed}개 통과, ${r.failed ? r.failed + '개 실패' : ''}${r.failed && r.errored ? ', ' : ''}${r.errored ? r.errored + '개 오류' : ''}`;
+  D.cases.forEach(c => $('#strip').append(h('button', {
+    class: 'seg', 'data-s': c.status, title: `${c.id} ${LABEL[c.status]}`, 'aria-label': `${c.id} ${LABEL[c.status]}`,
+    onclick: () => openCase(c.id),
+  })));
+}
+
+/* 타임라인 */
+function timeline(c) {
+  const nodes = [...new Set(c.trace.map(e => e[2]))];
+  const W = 960, L = 110, R = 20, LANE = 40, H = nodes.length * LANE + 34;
+  const end = Math.max(c.scenarioMs * 1e6, ...c.trace.map(e => e[0]), 1);
+  const x = ns => L + (ns / end) * (W - L - R);
+  const svg = sv('svg', { class: 'tl', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${c.id} 송수신 타임라인` });
+  nodes.forEach((n, i) => {
+    const y = i * LANE + 22;
+    svg.append(sv('text', { x: 8, y: y + 4 }, n), sv('line', { class: 'base', x1: L, x2: W - R, y1: y, y2: y }));
+    for (const [t, d, nd, k] of c.trace) {
+      if (nd !== n) continue;
+      const px = x(t).toFixed(1), tip = `${n} ${DIR[d]} ${keyText(c.bus, k)} ${ms(t)}ms`;
+      const mark = d === 'tx' ? sv('line', { class: 'tx', x1: px, x2: px, y1: y, y2: y - 13 })
+        : d === 'rx' ? sv('line', { class: 'rx', x1: px, x2: px, y1: y, y2: y + 13 })
+        : sv('path', { class: 'to', d: `M${px - 4} ${y - 4}l8 8m0-8l-8 8`, fill: 'none' });
+      mark.append(sv('title', {}, tip));
+      svg.append(mark);
+    }
+  });
+  const ay = nodes.length * LANE + 14;
+  for (let i = 0; i <= 5; i++) {
+    const t = (end * i) / 5;
+    svg.append(sv('text', { x: x(t), y: ay + 10, 'text-anchor': i === 5 ? 'end' : i === 0 ? 'start' : 'middle' }, (t / 1e6).toFixed(0) + 'ms'));
+  }
+  return h('div', { class: 'tl-wrap' }, svg);
+}
+
+/* 트레이스 표 (노드 필터) */
+function traceTable(c) {
+  const nodes = [...new Set(c.trace.map(e => e[2]))];
+  const body = h('tbody'), info = h('p', { class: 'note' });
+  const sel = h('select', { class: 'sel', 'aria-label': '노드 선택', onchange: draw }, h('option', { value: '' }, '모든 노드'), nodes.map(n => h('option', { value: n }, n)));
+  function draw() {
+    const rows = c.trace.filter(e => !sel.value || e[2] === sel.value);
+    body.replaceChildren(...rows.slice(0, 200).map(([t, d, n, k, hx]) => h('tr', { 'data-s': d === 'to' ? 'FAIL' : '' },
+      h('td', { class: 'num' }, ms(t)), h('td', {}, DIR[d]), h('td', {}, n), h('td', {}, keyText(c.bus, k)),
+      h('td', { class: 'hex', title: hx }, hx.length > 64 ? hx.slice(0, 64) + '…' : hx))));
+    info.textContent = `${rows.length}건 중 ${Math.min(rows.length, 200)}건을 표시합니다.` +
+      (c.traceTotal > c.trace.length ? ` 화면에는 앞의 ${c.trace.length}건만 담겼고, 전체 ${c.traceTotal}건은 traces 폴더의 ${c.id}.ndjson에 있습니다.` : '');
+  }
+  draw();
+  return [h('div', { class: 'tools', style: 'padding:0 0 8px' }, sel), info,
+    h('div', { class: 'tbl-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['시각(ms)', '방향', '노드', '식별', '데이터(16진)'].map(t => h('th', {}, t)))), body))];
+}
+
+/* 케이스 한 건의 펼침 영역 */
+function panel(c) {
+  const p = h('div', { class: 'panel' });
+  if (c.error) p.append(h('p', { class: 'callout' }, c.error));
+  if (c.requirements.length) p.append(h('div', { class: 'reqs-line' }, c.requirements.map(r => h('span', { class: 'tag' }, r))));
+  if (c.results.length) p.append(h('h3', {}, '기대값 비교'), h('div', { class: 'tbl-wrap' }, h('table', {},
+    h('thead', {}, h('tr', {}, ['종류', '기대', '실제', '결과'].map(t => h('th', {}, t)))),
+    h('tbody', {}, c.results.map(r => h('tr', { 'data-s': r.status },
+      h('td', {}, r.kind), h('td', {}, fmtObj(r.expected)), h('td', {}, fmtObj(r.actual)),
+      h('td', {}, h('span', { class: r.status === 'PASS' ? 't-pass' : r.status === 'FAIL' ? 't-fail' : 't-err' }, `${GLYPH[r.status]} ${LABEL[r.status]}`), r.message ? ' ' + r.message : '')))))));
+  if (c.trace.length) p.append(h('h3', {}, '송수신 타임라인'),
+    h('p', { class: 'note' }, '노드마다 한 줄입니다. 위로 솟은 선은 송신, 아래로 내려간 선은 수신, ✕는 응답이 없던 시점입니다. 선에 마우스를 올리면 시각이 보입니다.'),
+    timeline(c), h('h3', {}, '트래픽 기록'), ...traceTable(c));
+  return p;
+}
+
+/* 목록 */
+let filter = 'all', query = '';
+function caseItem(c) {
+  const pan = h('div', { hidden: true });
+  const btn = h('button', { class: 'row', 'aria-expanded': 'false', onclick: () => toggle(li) },
+    h('span', { class: 'badge', 'data-s': c.status }, `${GLYPH[c.status]} ${LABEL[c.status]}`),
+    h('span', { class: 'cid' }, c.id), h('span', { class: 'ttl' }, c.title),
+    h('span', { class: 'sub' }, h('span', {}, c.bus === 'can' ? 'CAN' : '1553B'), h('span', {}, c.timeMode === 'realtime' ? '실시간' : '가상 시간'), h('span', {}, c.durationMs + 'ms')));
+  const li = h('li', { id: 'case-' + c.id }, btn, pan);
+  li._c = c; li._pan = pan; li._btn = btn;
+  return li;
+}
+function toggle(li, open) {
+  const want = open ?? li._btn.getAttribute('aria-expanded') !== 'true';
+  if (want && !li._pan.firstChild) li._pan.append(panel(li._c)); // 펼칠 때 처음 한 번만 그린다
+  li._pan.hidden = !want;
+  li._btn.setAttribute('aria-expanded', want);
+}
+function openCase(id) {
+  filter = 'all'; query = ''; $('#q').value = ''; applyFilter();
+  const li = document.getElementById('case-' + id);
+  if (li) { toggle(li, true); li.scrollIntoView({ block: 'start' }); }
+}
+function applyFilter() {
+  document.querySelectorAll('#cases > li').forEach(li => {
+    const c = li._c, q = query.toLowerCase();
+    const okF = filter === 'all' || (filter === 'bad' ? c.status !== 'PASS' : c.status === filter);
+    const okQ = !q || [c.id, c.title, ...c.requirements].join(' ').toLowerCase().includes(q);
+    li.hidden = !(okF && okQ);
+  });
+  document.querySelectorAll('.chip').forEach(b => b.setAttribute('aria-pressed', b.dataset.f === filter));
+}
+
+/* 요구사항 추적 */
+function reqs() {
+  const byId = Object.fromEntries(D.cases.map(c => [c.id, c]));
+  const none = D.requirements.filter(r => r.caseIds.length === 0).length;
+  $('#reqs-sum').textContent = `요구사항 ${D.requirements.length}개 중 ${D.requirements.length - none}개에 시험이 연결되어 있고, ${none}개는 시험이 없습니다.`;
+  $('#reqs-tbl').append(h('thead', {}, h('tr', {}, ['요구사항', '제목', '연결된 시나리오'].map(t => h('th', {}, t)))),
+    h('tbody', {}, D.requirements.map(r => h('tr', {},
+      h('td', {}, r.id), h('td', {}, r.title),
+      h('td', {}, r.caseIds.length === 0 ? h('span', { class: 't-none' }, '시험 없음') :
+        r.caseIds.map(id => h('button', { class: 'tag', style: 'margin-right:6px', onclick: () => { select('cases'); openCase(id); } },
+          h('span', { class: byId[id].status === 'PASS' ? 't-pass' : byId[id].status === 'FAIL' ? 't-fail' : 't-err' }, GLYPH[byId[id].status]), ' ' + id)))))));
+}
+
+function select(name) {
+  for (const n of ['cases', 'reqs']) {
+    $('#view-' + n).hidden = n !== name;
+    $('#tab-' + n).setAttribute('aria-selected', n === name);
+  }
+}
+
+/* 시작 */
+header();
+if (D.cases.length === 0) $('#cases').replaceWith(h('p', { class: 'empty' }, 'scenarios 폴더에 시나리오(YAML)가 없습니다. 파일을 추가하고 다시 실행하세요.'));
+else D.cases.forEach(c => $('#cases').append(caseItem(c)));
+const bad = D.run.failed + D.run.errored;
+document.querySelector('[data-f=all]').textContent = `전체 ${D.run.total}`;
+document.querySelector('[data-f=bad]').textContent = `실패·오류 ${bad}`;
+document.querySelector('[data-f=PASS]').textContent = `통과 ${D.run.passed}`;
+document.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { filter = b.dataset.f; applyFilter(); }));
+$('#q').addEventListener('input', e => { query = e.target.value; applyFilter(); });
+$('#tab-cases').addEventListener('click', () => select('cases'));
+$('#tab-reqs').addEventListener('click', () => select('reqs'));
+reqs();
+if (bad > 0) { const first = D.cases.find(c => c.status !== 'PASS'); if (first) toggle(document.getElementById('case-' + first.id), true); } // 실패가 있으면 첫 실패를 미리 펼친다
+</script>
+</body>
+</html>

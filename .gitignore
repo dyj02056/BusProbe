@@ -1,0 +1,6 @@
+build/
+reports/
+bin/
+obj/
+.env
+*.user

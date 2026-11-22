@@ -1,0 +1,12 @@
+id: SC-M1553-001
+title: BC가 RT5에 데이터를 보내면 정상 상태 워드로 응답
+requirements: [REQ-1553-001]
+bus: m1553
+duration_ms: 100
+nodes:
+  - name: BC
+    schedule: [{ rt: 5, dir: bc_to_rt, sa: 3, words: [0x1111, 0x2222], period_ms: 20 }]
+  - { name: RT5, rt: 5, status: [terminal_flag] }
+expect:
+  - { kind: count, node: BC, rt: 5, tr: 0, sa: 3, min: 5, max: 5 }
+  - { kind: status_word, node: BC, rt: 5, tr: 0, sa: 3, bits: { busy: false, message_error: false, terminal_flag: true } }

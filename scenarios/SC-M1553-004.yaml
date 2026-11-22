@@ -1,0 +1,15 @@
+id: SC-M1553-004
+title: 방송 메시지는 모든 RT가 받고 응답은 없음
+requirements: [REQ-1553-004]
+bus: m1553
+duration_ms: 100
+nodes:
+  - name: BC
+    schedule: [{ rt: 31, dir: bc_to_rt, sa: 1, words: [0xBEEF], period_ms: 20 }]
+  - { name: RT1, rt: 1 }
+  - { name: RT2, rt: 2 }
+expect:
+  - { kind: count, node: RT1, rt: 31, tr: 0, sa: 1, min: 5, max: 5 }
+  - { kind: count, node: RT2, rt: 31, tr: 0, sa: 1, min: 5, max: 5 }
+  - { kind: count, node: BC, dir: rx, rt: 31, tr: 0, sa: 1, max: 0 }
+  - { kind: count, node: BC, dir: to, rt: 31, tr: 0, sa: 1, max: 0 }

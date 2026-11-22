@@ -1,0 +1,13 @@
+id: SC-CAN-001
+title: 하트비트 10ms 주기 송신
+requirements: [REQ-CAN-001]
+bus: can
+duration_ms: 1000
+nodes:
+  - name: ECU_A
+    periodic: [{ id: 0x100, dlc: 2, data: [0x01, 0x00], period_ms: 10 }]
+  - name: ECU_B
+    subscribe: ['0x100']
+expect:
+  - { kind: count, node: ECU_B, id: 0x100, min: 95, max: 101 }
+  - { kind: period, node: ECU_B, id: 0x100, mean_ms: 10, tolerance_ms: 0.5, jitter_p99_ms: 0.5 }

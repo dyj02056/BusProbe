@@ -1,0 +1,11 @@
+id: SC-CAN-005
+title: 송신 개시 전에는 아무 프레임도 오지 않음
+requirements: [REQ-CAN-005]
+bus: can
+duration_ms: 1000
+nodes:
+  - { name: ECU_A, periodic: [{ id: 0x300, dlc: 1, data: [0x01], period_ms: 10, offset_ms: 600 }] }
+  - { name: ECU_B, subscribe: ['0x300'] }
+expect:
+  - { kind: count, node: ECU_B, id: 0x300, to_ms: 600, max: 0 }
+  - { kind: count, node: ECU_B, id: 0x300, from_ms: 600, min: 40, max: 40 }

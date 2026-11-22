@@ -1,0 +1,12 @@
+id: SC-CAN-007
+title: 실시간 모드 하트비트 (윈도우 타이머 오차를 감안한 느슨한 기준)
+requirements: [REQ-CAN-001]
+bus: can
+time_mode: realtime
+duration_ms: 300
+nodes:
+  - { name: ECU_A, periodic: [{ id: 0x100, dlc: 2, data: [0x01, 0x00], period_ms: 10 }] }
+  - { name: ECU_B, subscribe: ['0x100'] }
+expect:
+  - { kind: count, node: ECU_B, id: 0x100, min: 25, max: 31 }
+  - { kind: period, node: ECU_B, id: 0x100, mean_ms: 10, tolerance_ms: 4, jitter_p99_ms: 25 }

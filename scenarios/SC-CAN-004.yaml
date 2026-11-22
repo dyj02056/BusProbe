@@ -1,0 +1,14 @@
+id: SC-CAN-004
+title: 요청에서 응답까지 지연이 3ms 이내
+requirements: [REQ-CAN-004]
+bus: can
+duration_ms: 1000
+nodes:
+  - name: ECU_A
+    periodic: [{ id: 0x200, dlc: 1, data: [0x01], period_ms: 50 }]
+    subscribe: ['0x201']
+  - name: ECU_B
+    respond: [{ on: 0x200, id: 0x201, dlc: 2, data: [0x00, 0x01], delay_ms: 2 }]
+expect:
+  - { kind: latency, node: ECU_A, id: 0x200, to_node: ECU_A, to_id: 0x201, p95_ms: 3 }
+  - { kind: count, node: ECU_A, id: 0x201, min: 20, max: 20 }

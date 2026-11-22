@@ -1,0 +1,11 @@
+id: SC-CAN-006
+title: 신호값 해석 (8비트와 16비트, 배율과 오프셋)
+requirements: [REQ-CAN-006]
+bus: can
+duration_ms: 500
+nodes:
+  - { name: ECU_A, periodic: [{ id: 0x400, dlc: 2, data: [0x64, 0x00], period_ms: 100 }] }
+  - { name: ECU_B, subscribe: ['0x400'] }
+expect:
+  - { kind: signal, node: ECU_B, id: 0x400, start_bit: 0, length: 8, factor: 0.5, offset: -10, lo: 39.5, hi: 40.5 }
+  - { kind: signal, node: ECU_B, id: 0x400, start_bit: 0, length: 16, factor: 0.1, lo: 9.9, hi: 10.1 }

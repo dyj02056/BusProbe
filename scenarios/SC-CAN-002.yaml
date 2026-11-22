@@ -1,0 +1,12 @@
+id: SC-CAN-002
+title: 두 노드가 같은 시각에 보내도 프레임 누락 없음
+requirements: [REQ-CAN-002]
+bus: can
+duration_ms: 1000
+nodes:
+  - { name: ECU_A, periodic: [{ id: 0x200, dlc: 1, data: [0xAA], period_ms: 10 }] }
+  - { name: ECU_B, periodic: [{ id: 0x100, dlc: 1, data: [0xBB], period_ms: 10 }] }
+  - { name: LOGGER, subscribe: ['*'] }
+expect:
+  - { kind: count, node: LOGGER, id: 0x100, min: 100, max: 100 }
+  - { kind: count, node: LOGGER, id: 0x200, min: 100, max: 100 }

@@ -1,0 +1,10 @@
+id: SC-CAN-003
+title: 확장 ID(29비트) 프레임 송수신
+requirements: [REQ-CAN-003]
+bus: can
+duration_ms: 1000
+nodes:
+  - { name: ECU_A, periodic: [{ id: 0x1ABCDE, ext: true, dlc: 4, data: [1, 2, 3, 4], period_ms: 20 }] }
+  - { name: ECU_B, subscribe: ['0x1ABCDE'] }
+expect:
+  - { kind: count, node: ECU_B, id: 0x1ABCDE, min: 50, max: 50 }

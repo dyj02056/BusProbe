@@ -1,0 +1,42 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:  # PR마다 외부 비밀값 없이 DB 저장 경로까지 검증
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: busprobe }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: Host=localhost;Port=5432;Database=busprobe;Username=postgres;Password=postgres;SSL Mode=Disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: 10.0.x }
+      - name: C++ 빌드와 단위 테스트
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+      - name: C# 테스트 (시뮬레이터 통합 테스트 포함)
+        run: dotnet test runner -c Release
+      - name: DB 마이그레이션과 전체 시나리오 실행
+        run: |
+          dotnet run --project runner/BusProbe.Cli -c Release -- db migrate
+          dotnet run --project runner/BusProbe.Cli -c Release -- run scenarios --simd build/busprobe-simd --out reports --no-realtime
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: busprobe-reports, path: reports }
+
+  tsan:  # 스레드 관련 데이터 경쟁 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=thread"
+          cmake --build build-tsan
+          ctest --test-dir build-tsan --output-on-failure
