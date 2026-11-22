@@ -67,7 +67,7 @@ h1 { margin: 0 0 24px; max-width: 24em; font-size: clamp(1.7rem, 4.4vw, 2.5rem);
 .note { max-width: 62ch; color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
 .callout { max-width: 62ch; padding: 10px 14px; border-left: 4px solid var(--err); background: var(--err-bg); }
 .reqs-line { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
-.tag { padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; }
+.tag { padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; background: transparent; color: var(--ink); } /* button.tag도 다크 모드에서 읽히게 */
 
 /* 표 */
 .tbl-wrap { overflow-x: auto; }
@@ -79,6 +79,7 @@ td.num { text-align: right; white-space: nowrap; }
 tr[data-s="FAIL"] td:first-child { box-shadow: inset 4px 0 var(--fail); }
 tr[data-s="ERROR"] td:first-child { box-shadow: inset 4px 0 var(--err); }
 .t-fail { color: var(--fail); } .t-pass { color: var(--pass); } .t-err { color: var(--err); } .t-none { color: var(--muted); }
+.t-fail, .t-pass, .t-err, .t-none { white-space: nowrap; }
 
 /* 타임라인: 노드마다 한 줄, 위로 송신 아래로 수신 */
 .tl-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
